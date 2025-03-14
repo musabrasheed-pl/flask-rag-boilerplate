@@ -1,0 +1,117 @@
+{
+    "swagger": "2.0",
+    "info": {
+      "title": "Flask API",
+      "version": "1.0"
+    },
+    "paths": {
+      "/": {
+        "get": {
+          "summary": "Returns a greeting message",
+          "responses": {
+            "200": {
+              "description": "Success",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/process_files": {
+        "post": {
+          "summary": "Processes uploaded PDF files",
+          "parameters": [
+            {
+              "name": "files",
+              "in": "formData",
+              "required": true,
+              "type": "file",
+              "description": "Files to be uploaded"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Files processed successfully",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": { "type": "string" },
+                  "chunks_count": { "type": "integer" }
+                }
+              }
+            },
+            "400": {
+              "description": "No valid files processed",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "error": { "type": "string" }
+                }
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "error": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/ask": {
+        "post": {
+          "summary": "Answers queries based on processed files",
+          "parameters": [
+            {
+              "name": "query",
+              "in": "body",
+              "required": true,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string" }
+                }
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Answer to the query",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string" },
+                  "answer": { "type": "string" }
+                }
+              }
+            },
+            "400": {
+              "description": "Missing 'query' in request body",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "error": { "type": "string" }
+                }
+              }
+            },
+            "500": {
+              "description": "Internal server error",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "error": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }

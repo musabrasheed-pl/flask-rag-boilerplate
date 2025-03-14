@@ -1,0 +1,9 @@
+Flask
+PyPDF2
+langchain
+openai
+pinecone
+python-dotenv
+# Optionally, add chromadb if you plan to use Chroma as your vector store:
+# chromadb
+flask-swagger-ui
