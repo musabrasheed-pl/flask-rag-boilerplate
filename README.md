@@ -30,7 +30,7 @@ This repository contains a Flask application that implements a Retrieval-Augment
 
    ```bash
    git clone https://github.com/musabrasheed-pl/flask-rag-boilerplate.git
-   cd your-repo
+   cd flask-rag-boilerplate
 
 2. **Create a Virtual Environment & Install Dependencies**
     

@@ -1,6 +1,7 @@
 Flask
 PyPDF2
 langchain
+langchain_community
 openai
 pinecone
 python-dotenv
