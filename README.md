@@ -17,7 +17,7 @@ This repository contains a Flask application that implements a Retrieval-Augment
 
 ## Prerequisites
 
-- Python 3.7 or higher
+- Python 3.8 or higher
 - API keys for:
   - **OpenAI**
   - **Pinecone** (if using Pinecone)
