@@ -1,12 +1,12 @@
-from flask import Flask, request, jsonify
 import os
 import time
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
-import pinecone
+from pinecone import Pinecone, ServerlessSpec  # Updated import
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS, Chroma, Pinecone as LangchainPinecone
 from langchain_community.chat_models import ChatOpenAI, ChatGooglePalm, ChatAnthropic
@@ -15,29 +15,25 @@ from flask_swagger_ui import get_swaggerui_blueprint
 # Load environment variables from the .env file
 load_dotenv()
 
-# === Configuration Variables ===
+# Configuration Variables
 VECTORSTORE_TYPE = os.getenv("VECTORSTORE_TYPE", "pinecone").lower()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 
 # Swagger UI setup
-SWAGGER_URL = "/docs"  # URL for Swagger UI
-API_URL = "/static/swagger.json"  # JSON file with API spec
+SWAGGER_URL = "/docs"
+API_URL = "/static/swagger.json"
 
 app = Flask(__name__)
 swagger_ui_blueprint = get_swaggerui_blueprint(SWAGGER_URL, API_URL)
 app.register_blueprint(swagger_ui_blueprint, url_prefix=SWAGGER_URL)
 
-# Global storage for conversation history, vectorstore, and processed chunks
+# Global storage
 conversation_history = []
 vectorstore_global = None
 chunks_global = None
 
-# ====================================
-#          RAG Application Class
-# ====================================
 class RAGApp:
     def __init__(self):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -50,7 +46,6 @@ class RAGApp:
             raise ValueError(f"Please set up your {key_name} in the .env file")
 
     def process_files(self, files):
-        """Process uploaded PDF files and split text into chunks."""
         all_chunks = []
         for file in files:
             if not file.filename.endswith(".pdf"):
@@ -66,32 +61,35 @@ class RAGApp:
         return "".join(page.extract_text() or "" for page in pdf_reader.pages)
 
     def initialize_vectorstore(self, chunks):
-        """Initialize vectorstore based on configuration."""
+        texts = [chunk for chunk, _ in chunks]
+        metadatas = [{"source": filename} for _, filename in chunks]
+
         if VECTORSTORE_TYPE == "pinecone":
-            return self.initialize_pinecone_vectorstore()
+            vectorstore = self.initialize_pinecone_vectorstore()
+            vectorstore.add_texts(texts, metadatas=metadatas)
+            return vectorstore
         elif VECTORSTORE_TYPE == "faiss":
-            texts = [chunk for chunk, _ in chunks]
             return FAISS.from_texts(texts, self.embedding)
         elif VECTORSTORE_TYPE == "chroma":
-            texts = [chunk for chunk, _ in chunks]
             return Chroma.from_texts(texts, self.embedding, collection_name="documents")
         else:
             raise ValueError("Unsupported VECTORSTORE_TYPE. Please use 'pinecone', 'faiss', or 'chroma'.")
 
     def initialize_pinecone_vectorstore(self):
         self.validate_key(os.getenv("PINECONE_API_KEY"), "PINECONE_API_KEY")
-        index_name = PINECONE_INDEX_NAME
-        dimension = 1580
-        pc = pinecone.init(api_key=os.getenv("PINECONE_API_KEY"))
-        existing_indexes = pinecone.list_indexes()
-        if index_name not in existing_indexes:
-            pinecone.create_index(
+        index_name = "video-transcripts"
+        dimension = 3072
+
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        if index_name not in [index.name for index in pc.list_indexes()]:
+            pc.create_index(
                 name=index_name,
                 dimension=dimension,
                 metric="cosine",
-                spec=pinecone.ServerlessSpec(cloud="aws", region="us-east-1")
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
             self.wait_for_index(pc, index_name)
+
         index = pc.Index(index_name)
         return LangchainPinecone(index, self.embedding, "text")
 
@@ -101,7 +99,6 @@ class RAGApp:
             time.sleep(1)
 
     def setup_qa_chain(self, vectorstore):
-        """Set up the QA retrieval chain using the configured LLM and vectorstore."""
         llm = self.initialize_llm()
         prompt = self.create_prompt()
         return ConversationalRetrievalChain.from_llm(
@@ -152,10 +149,7 @@ class RAGApp:
 
     def answer_query(self, vectorstore, query):
         qa_chain = self.setup_qa_chain(vectorstore)
-        # Format conversation history as a string
-        history_text = "\n".join(
-            [f"User: {q}\nAssistant: {a}" for q, a in conversation_history]
-        )
+        history_text = "\n".join([f"User: {q}\nAssistant: {a}" for q, a in conversation_history])
         result = qa_chain({
             "question": query,
             "history": history_text,
@@ -164,7 +158,6 @@ class RAGApp:
         conversation_history.append((query, result["answer"]))
         return result["answer"]
 
-# Create a global instance of RAGApp
 rag_app = RAGApp()
 
 @app.route('/process_files', methods=['POST'])
@@ -185,16 +178,20 @@ def process_files_endpoint():
 
 @app.route('/ask', methods=['POST'])
 def ask_endpoint():
-    global vectorstore_global, chunks_global
+    global vectorstore_global
     data = request.get_json()
     if not data or "query" not in data:
         return jsonify({"error": "Missing 'query' in request body"}), 400
+
     query = data["query"]
+
+    # 👇 Fix: If vectorstore_global is None, reconnect to existing Pinecone index
     if not vectorstore_global:
-        if chunks_global:
-            vectorstore_global = rag_app.initialize_vectorstore(chunks_global)
-        else:
-            return jsonify({"error": "No data processed. Please upload files first."}), 400
+        try:
+            vectorstore_global = rag_app.initialize_pinecone_vectorstore()
+        except Exception as e:
+            return jsonify({"error": f"Failed to load existing Pinecone index: {str(e)}"}), 500
+
     try:
         answer = rag_app.answer_query(vectorstore_global, query)
         return jsonify({"query": query, "answer": answer}), 200
