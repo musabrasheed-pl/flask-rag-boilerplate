@@ -6,11 +6,13 @@ from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
-from pinecone import Pinecone, ServerlessSpec  # Updated import
+from pinecone import Pinecone, ServerlessSpec
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS, Chroma, Pinecone as LangchainPinecone
 from langchain_community.chat_models import ChatOpenAI, ChatGooglePalm, ChatAnthropic
 from flask_swagger_ui import get_swaggerui_blueprint
+from flask_cors import CORS
+from pathlib import Path
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -20,12 +22,15 @@ VECTORSTORE_TYPE = os.getenv("VECTORSTORE_TYPE", "pinecone").lower()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)
 
 # Swagger UI setup
 SWAGGER_URL = "/docs"
 API_URL = "/static/swagger.json"
-
-app = Flask(__name__)
 swagger_ui_blueprint = get_swaggerui_blueprint(SWAGGER_URL, API_URL)
 app.register_blueprint(swagger_ui_blueprint, url_prefix=SWAGGER_URL)
 
@@ -33,17 +38,55 @@ app.register_blueprint(swagger_ui_blueprint, url_prefix=SWAGGER_URL)
 conversation_history = []
 vectorstore_global = None
 chunks_global = None
+rag_app = None  # Delay initialization
 
 class RAGApp:
     def __init__(self):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
         self.validate_key(self.openai_api_key, "OPENAI_API_KEY")
+        if VECTORSTORE_TYPE == "pinecone":
+            self.validate_key(self.pinecone_api_key, "PINECONE_API_KEY")
         self.embedding = OpenAIEmbeddings(openai_api_key=self.openai_api_key, model=EMBEDDING_MODEL)
 
     @staticmethod
     def validate_key(key, key_name):
         if not key:
             raise ValueError(f"Please set up your {key_name} in the .env file")
+
+    def load_env_variables(self, new_env: dict):
+        for key, value in new_env.items():
+            os.environ[key] = value
+
+        global VECTORSTORE_TYPE, EMBEDDING_MODEL, LLM_PROVIDER, LLM_MODEL, PINECONE_API_KEY
+        VECTORSTORE_TYPE = os.getenv("VECTORSTORE_TYPE", "pinecone").lower()
+        EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
+        LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
+        LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
+        PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
+        self.validate_key(self.openai_api_key, "OPENAI_API_KEY")
+        if VECTORSTORE_TYPE == "pinecone":
+            self.validate_key(self.pinecone_api_key, "PINECONE_API_KEY")
+        self.embedding = OpenAIEmbeddings(openai_api_key=self.openai_api_key, model=EMBEDDING_MODEL)
+
+    def initialize_vectorstore(self, chunks):
+        texts = [chunk for chunk, _ in chunks]
+        metadatas = [{"source": filename} for _, filename in chunks]
+
+        print("Vectorstore Type:", VECTORSTORE_TYPE)
+        if VECTORSTORE_TYPE == "pinecone":
+            vectorstore = self.initialize_pinecone_vectorstore()
+            vectorstore.add_texts(texts, metadatas=metadatas)
+            return vectorstore
+        elif VECTORSTORE_TYPE == "faiss":
+            return FAISS.from_texts(texts, self.embedding)
+        elif VECTORSTORE_TYPE == "chroma":
+            return Chroma.from_texts(texts, self.embedding, collection_name="documents")
+        else:
+            raise ValueError("Unsupported VECTORSTORE_TYPE. Please use 'pinecone', 'faiss', or 'chroma'.")
 
     def process_files(self, files):
         all_chunks = []
@@ -60,20 +103,6 @@ class RAGApp:
         pdf_reader = PdfReader(file)
         return "".join(page.extract_text() or "" for page in pdf_reader.pages)
 
-    def initialize_vectorstore(self, chunks):
-        texts = [chunk for chunk, _ in chunks]
-        metadatas = [{"source": filename} for _, filename in chunks]
-
-        if VECTORSTORE_TYPE == "pinecone":
-            vectorstore = self.initialize_pinecone_vectorstore()
-            vectorstore.add_texts(texts, metadatas=metadatas)
-            return vectorstore
-        elif VECTORSTORE_TYPE == "faiss":
-            return FAISS.from_texts(texts, self.embedding)
-        elif VECTORSTORE_TYPE == "chroma":
-            return Chroma.from_texts(texts, self.embedding, collection_name="documents")
-        else:
-            raise ValueError("Unsupported VECTORSTORE_TYPE. Please use 'pinecone', 'faiss', or 'chroma'.")
 
     def initialize_pinecone_vectorstore(self):
         self.validate_key(os.getenv("PINECONE_API_KEY"), "PINECONE_API_KEY")
@@ -158,11 +187,11 @@ class RAGApp:
         conversation_history.append((query, result["answer"]))
         return result["answer"]
 
-rag_app = RAGApp()
-
 @app.route('/process_files', methods=['POST'])
 def process_files_endpoint():
-    global vectorstore_global, chunks_global
+    global vectorstore_global, chunks_global, rag_app
+    if not rag_app:
+        return jsonify({"error": "Environment not loaded. Please call /load_env first."}), 400
     if 'files' not in request.files:
         return jsonify({"error": "No files provided"}), 400
     files = request.files.getlist('files')
@@ -178,14 +207,15 @@ def process_files_endpoint():
 
 @app.route('/ask', methods=['POST'])
 def ask_endpoint():
-    global vectorstore_global
+    global vectorstore_global, rag_app
+    if not rag_app:
+        return jsonify({"error": "Environment not loaded. Please call /load_env first."}), 400
     data = request.get_json()
     if not data or "query" not in data:
         return jsonify({"error": "Missing 'query' in request body"}), 400
 
     query = data["query"]
 
-    # 👇 Fix: If vectorstore_global is None, reconnect to existing Pinecone index
     if not vectorstore_global:
         try:
             vectorstore_global = rag_app.initialize_pinecone_vectorstore()
@@ -197,6 +227,53 @@ def ask_endpoint():
         return jsonify({"query": query, "answer": answer}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/load_env', methods=['POST'])
+def load_env_endpoint():
+    global rag_app
+    try:
+        user_input = request.get_json()
+        if not user_input:
+            return jsonify({"error": "Missing environment variables in request body"}), 400
+
+        # Map user-friendly labels to .env keys
+        label_to_env_key = {
+            "OpenAI API Key": "OPENAI_API_KEY",
+            "Pinecone API Key": "PINECONE_API_KEY",
+            "Claude API Key": "CLAUDE_API_KEY",
+            "Gemini API Key": "GEMINI_API_KEY",
+            "Vectorstore Type": "VECTORSTORE_TYPE",
+            "Embedding Model": "EMBEDDING_MODEL",
+            "LLM Provider": "LLM_PROVIDER",
+            "LLM Model": "LLM_MODEL"
+        }
+
+        env_dict = {}
+        for label, env_key in label_to_env_key.items():
+            value = user_input.get(label)
+            if value:
+                env_dict[env_key] = value
+
+        if not env_dict:
+            return jsonify({"error": "No valid environment variables found"}), 400
+
+        # Write to .env file
+        env_path = Path(".env")
+        with open(env_path, "w") as f:
+            for key, value in env_dict.items():
+                f.write(f'{key}="{value}"\n')
+
+        # First, update the runtime environment variables
+        for key, value in env_dict.items():
+            os.environ[key] = value
+
+        # Now initialize the application after setting env vars
+        rag_app = RAGApp()
+
+        return jsonify({"message": "Environment loaded and saved successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/', methods=['GET'])
 def hello():

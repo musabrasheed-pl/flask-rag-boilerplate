@@ -1,113 +1,195 @@
 {
-    "swagger": "2.0",
-    "info": {
-      "title": "Flask API",
-      "version": "1.0"
+  "swagger": "2.0",
+  "info": {
+    "title": "Flask API",
+    "version": "1.0",
+    "description": "API documentation for the Flask-based RAG application."
+  },
+  "host": "localhost:5000",
+  "schemes": ["http"],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Returns a greeting message",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
     },
-    "paths": {
-      "/": {
-        "get": {
-          "summary": "Returns a greeting message",
-          "responses": {
-            "200": {
-              "description": "Success",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "message": { "type": "string" }
+    "/load_env": {
+      "post": {
+        "summary": "Loads environment variables dynamically",
+        "description": "This endpoint allows users to provide environment variables, which are stored and used by the application.",
+        "parameters": [
+          {
+            "name": "env_vars",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "OpenAI API Key": {
+                  "type": "string",
+                  "example": "sk-xxx"
+                },
+                "Pinecone API Key": {
+                  "type": "string",
+                  "example": "pcsk-xxx"
+                },
+                "Claude API Key": {
+                  "type": "string",
+                  "example": "claude-xxx"
+                },
+                "Gemini API Key": {
+                  "type": "string",
+                  "example": "gemini-xxx"
+                },
+                "Vectorstore Type": {
+                  "type": "string",
+                  "example": "pinecone"
+                },
+                "Embedding Model": {
+                  "type": "string",
+                  "example": "text-embedding-3-large"
+                },
+                "LLM Provider": {
+                  "type": "string",
+                  "example": "openai"
+                },
+                "LLM Model": {
+                  "type": "string",
+                  "example": "gpt-4o"
                 }
               }
             }
           }
-        }
-      },
-      "/process_files": {
-        "post": {
-          "summary": "Processes uploaded PDF files",
-          "parameters": [
-            {
-              "name": "files",
-              "in": "formData",
-              "required": true,
-              "type": "file",
-              "description": "Files to be uploaded"
+        ],
+        "responses": {
+          "200": {
+            "description": "Environment variables loaded successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": { "type": "string" }
+              }
             }
-          ],
-          "responses": {
-            "200": {
-              "description": "Files processed successfully",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "message": { "type": "string" },
-                  "chunks_count": { "type": "integer" }
-                }
+          },
+          "400": {
+            "description": "Invalid request body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
               }
-            },
-            "400": {
-              "description": "No valid files processed",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "error": { "type": "string" }
-                }
-              }
-            },
-            "500": {
-              "description": "Internal server error",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "error": { "type": "string" }
-                }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
               }
             }
           }
         }
-      },
-      "/ask": {
-        "post": {
-          "summary": "Answers queries based on processed files",
-          "parameters": [
-            {
-              "name": "query",
-              "in": "body",
-              "required": true,
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "query": { "type": "string" }
-                }
+      }
+    },
+    "/process_files": {
+      "post": {
+        "summary": "Processes uploaded PDF files",
+        "consumes": ["multipart/form-data"],
+        "parameters": [
+          {
+            "name": "files",
+            "in": "formData",
+            "required": true,
+            "type": "file",
+            "description": "PDF files to process"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files processed successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": { "type": "string" },
+                "chunks_count": { "type": "integer" }
               }
             }
-          ],
-          "responses": {
-            "200": {
-              "description": "Answer to the query",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "query": { "type": "string" },
-                  "answer": { "type": "string" }
-                }
+          },
+          "400": {
+            "description": "No valid files processed",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
               }
-            },
-            "400": {
-              "description": "Missing 'query' in request body",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "error": { "type": "string" }
-                }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
               }
-            },
-            "500": {
-              "description": "Internal server error",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "error": { "type": "string" }
-                }
+            }
+          }
+        }
+      }
+    },
+    "/ask": {
+      "post": {
+        "summary": "Answers queries based on processed files",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string" }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Answer to the query",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string" },
+                "answer": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing 'query' in request body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string" }
               }
             }
           }
@@ -115,3 +197,4 @@
       }
     }
   }
+}
